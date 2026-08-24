@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 generate_project.py - FELIXDEV Project Generator
-Fixes missing Info.plist build error by enabling GENERATE_INFOPLIST
+Fixes missing Info.plist build error by generating a physical Info.plist and updating project.yml
 """
 import os
 from pathlib import Path
@@ -12,6 +12,49 @@ def write_file(path, content):
     full = ROOT / path
     full.parent.mkdir(parents=True, exist_ok=True)
     full.write_text(content, encoding='utf-8')
+
+# ===================== Info.plist =====================
+write_file("Info.plist", """\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <true/>
+    </dict>
+    <key>UILaunchScreen</key>
+    <dict/>
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+        <string>arm64</string>
+    </array>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
+</dict>
+</plist>
+""")
 
 # ===================== project.yml =====================
 write_file("project.yml", """\
@@ -37,6 +80,11 @@ targets:
   FELIXDEV:
     type: application
     platform: iOS
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: FELIXDEV
+        CFBundleName: FELIXDEV
     sources:
       - Sources/FELIXDEV
     resources:
@@ -44,8 +92,6 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yourcompany.felixdev
-        INFOPLIST_KEY_CFBundleDisplayName: FELIXDEV
-        INFOPLIST_KEY_CFBundleName: FELIXDEV
         GENERATE_INFOPLIST: YES
         CURRENT_PROJECT_VERSION: "1"
         MARKETING_VERSION: "1.0"
@@ -317,4 +363,4 @@ struct DashboardView: View {
 # ===================== Resources =====================
 write_file("Resources/en.lproj/Localizable.strings", '"Dashboard" = "Dashboard";\n')
 
-print("✅ Updated generate_project.py with GENERATE_INFOPLIST enabled.")
+print("✅ Updated generate_project.py with explicit Info.plist path.")
