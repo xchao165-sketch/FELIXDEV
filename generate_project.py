@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-generate_project.py - FELIXDEV iOS Project Generator (Strict Swift 5 Fix)
+generate_project.py - FELIXDEV Clean & Working iOS Project Generator
 """
 import os
 from pathlib import Path
@@ -32,20 +32,14 @@ settings:
     CODE_SIGNING_ALLOWED: "NO"
     CODE_SIGNING_REQUIRED: "NO"
     CODE_SIGN_IDENTITY: ""
-  configs:
-    QA:
-      SWIFT_ACTIVE_COMPILATION_CONDITIONS:
-        - QA_OFFLINE
-        - DEBUG
-      PRODUCT_BUNDLE_IDENTIFIER: com.yourcompany.felixdev.qa
 targets:
   FELIXDEV:
     type: application
     platform: iOS
     sources:
-      - path: Sources/FELIXDEV
+      - Sources/FELIXDEV
     resources:
-      - path: Resources
+      - Resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yourcompany.felixdev
@@ -62,43 +56,28 @@ targets:
           - DEBUG
 """)
 
-# ===================== QA.xcconfig =====================
-write_file("Config/QA.xcconfig", """\
-SWIFT_ACTIVE_COMPILATION_CONDITIONS = QA_OFFLINE DEBUG
-PRODUCT_BUNDLE_IDENTIFIER = com.yourcompany.felixdev.qa
-INFOPLIST_KEY_CFBundleDisplayName = FELIXDEV QA
-CODE_SIGNING_ALLOWED = NO
-CODE_SIGNING_REQUIRED = NO
-CODE_SIGN_IDENTITY = ""
-""")
-
-# ===================== LicenseProviding.swift =====================
-write_file("Sources/FELIXDEV/Core/LicenseProviding.swift", """\
+# ===================== Core Models & Interfaces =====================
+write_file("Sources/FELIXDEV/Core.swift", """\
 import Foundation
 
-protocol LicenseProviding { 
-    var isLicensed: Bool { get async } 
+protocol LicenseProviding {
+    var isLicensed: Bool { get async }
 }
 
-struct OfflineLicenseProvider: LicenseProviding { 
-    var isLicensed: Bool { get async { true } } 
+struct OfflineLicenseProvider: LicenseProviding {
+    var isLicensed: Bool { get async { true } }
 }
 
-struct ProductionLicenseProvider: LicenseProviding { 
-    var isLicensed: Bool { get async { false } } 
-}
-""")
-
-# ===================== PackageSource.swift =====================
-write_file("Sources/FELIXDEV/Core/PackageSource.swift", """\
-import Foundation
-
-protocol PackageSource { 
-    func loadPackage() async throws -> Data 
+struct ProductionLicenseProvider: LicenseProviding {
+    var isLicensed: Bool { get async { false } }
 }
 
-enum PackageSourceError: Error { 
-    case fileMissing(URL), networkUnavailable, invalidResponse 
+protocol PackageSource {
+    func loadPackage() async throws -> Data
+}
+
+enum PackageSourceError: Error {
+    case fileMissing(URL), invalidResponse
 }
 
 struct LocalPackageSource: PackageSource {
@@ -121,11 +100,6 @@ struct RemotePackageSource: PackageSource {
         return data
     }
 }
-""")
-
-# ===================== FeatureFlagProviding.swift =====================
-write_file("Sources/FELIXDEV/Core/FeatureFlagProviding.swift", """\
-import Foundation
 
 protocol FeatureFlagProviding {
     func isEnabled(_ id: String) async -> Bool
@@ -144,287 +118,13 @@ struct ProductionFeatureProvider: FeatureFlagProviding {
 }
 """)
 
-# ===================== CryptoVerifying.swift =====================
-write_file("Sources/FELIXDEV/Core/CryptoVerifying.swift", """\
-import Foundation
-import CryptoKit
-
-struct VerifiedPackage { 
-    let metadata: PackageMetadata 
-    let plaintext: Data 
-}
-
-protocol CryptoVerifying { 
-    func verify(_ data: Data) throws -> VerifiedPackage 
-}
-
-protocol TrustRoot { 
-    static var keyID: String { get } 
-    static var publicKeyData: Data { get } 
-}
-""")
-
-# ===================== QATrustRoot.swift =====================
-write_file("Sources/FELIXDEV/Core/QATrustRoot.swift", """\
-import Foundation
-import CryptoKit
-
-enum QATrustRoot: TrustRoot {
-    static let keyID = "qa-2026-01"
-    static let publicKeyData = Data()
-    static var publicKey: P256.Signing.PublicKey? {
-        try? P256.Signing.PublicKey(x963Representation: publicKeyData)
-    }
-}
-""")
-
-# ===================== ProductionTrustRoot.swift =====================
-write_file("Sources/FELIXDEV/Core/ProductionTrustRoot.swift", """\
-import Foundation
-import CryptoKit
-
-enum ProductionTrustRoot: TrustRoot {
-    static let keyID = "production-2026-01"
-    static let publicKeyData = Data()
-    static var publicKey: P256.Signing.PublicKey? {
-        try? P256.Signing.PublicKey(x963Representation: publicKeyData)
-    }
-}
-""")
-
-# ===================== DeviceKeyAgreementStore.swift =====================
-write_file("Sources/FELIXDEV/Core/DeviceKeyAgreementStore.swift", """\
-import Foundation
-import CryptoKit
-import Security
-
-enum KeyStoreError: Error { 
-    case saveFailed(OSStatus), loadFailed(OSStatus) 
-}
-
-final class DeviceKeyAgreementStore {
-    private let service = "com.yourcompany.felixdev.qa"
-    private let account = "device-key-agreement"
-
-    func keyAgreementKey() throws -> P256.KeyAgreement.PrivateKey {
-        if let existing = try load() { return existing }
-        let key = P256.KeyAgreement.PrivateKey()
-        try save(key)
-        return key
-    }
-
-    var publicKeyData: Data { 
-        get throws { 
-            try keyAgreementKey().publicKey.x963Representation 
-        } 
-    }
-
-    private func save(_ key: P256.KeyAgreement.PrivateKey) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: key.rawRepresentation,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-        SecItemDelete(query as CFDictionary)
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else { throw KeyStoreError.saveFailed(status) }
-    }
-
-    private func load() throws -> P256.KeyAgreement.PrivateKey? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data else { throw KeyStoreError.loadFailed(status) }
-        return try P256.KeyAgreement.PrivateKey(rawRepresentation: data)
-    }
-}
-""")
-
-# ===================== ByteReader.swift =====================
-write_file("Sources/FELIXDEV/Core/ByteReader.swift", """\
-import Foundation
-
-struct ByteReader {
-    private let data: Data
-    private(set) var offset: Int = 0
-
-    init(_ data: Data) { self.data = data }
-
-    var remaining: Int { data.count - offset }
-
-    mutating func readData(count: Int) throws -> Data {
-        guard count >= 0, remaining >= count else { throw PackageError.truncated }
-        let sub = data.subdata(in: offset..<(offset + count))
-        offset += count
-        return sub
-    }
-
-    mutating func readUInt16BE() throws -> UInt16 {
-        let d = try readData(count: 2)
-        return d.withUnsafeBytes { $0.load(as: UInt16.self).bigEndian }
-    }
-
-    mutating func readUInt32BE() throws -> UInt32 {
-        let d = try readData(count: 4)
-        return d.withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
-    }
-}
-""")
-
-# ===================== PackageParser.swift =====================
-write_file("Sources/FELIXDEV/Core/PackageParser.swift", """\
-import Foundation
-
-struct PackageContainer {
-    static let magic = Data("3105".utf8)
-    static let expectedVersion: UInt16 = 2
-    let version: UInt16
-    let flags: UInt16
-    let metadata: PackageMetadata
-    let ephemeralPublicKey: Data
-    let wrapNonce: Data
-    let wrappedContentKey: Data
-    let contentNonce: Data
-    let ciphertext: Data
-    let contentTag: Data
-    let signature: Data
-    let signedBytes: Data
-}
-
-struct PackageMetadata: Codable {
-    let environment: String
-    let keyID: String
-    let algorithm: String
-    let contentLength: Int
-    let contentHash: String
-}
-
-enum PackageError: Error {
-    case truncated, invalidMagic, unsupportedVersion(UInt16), invalidJSON, invalidField(String)
-    case invalidSignature, wrongEnvironment, wrongKeyID, invalidAlgorithm, hashMismatch, cryptoFailure
-}
-
-enum PackageParser {
-    static func parse(_ data: Data) throws -> PackageContainer {
-        var r = ByteReader(data)
-        guard try r.readData(count: 4) == PackageContainer.magic else { throw PackageError.invalidMagic }
-        let version = try r.readUInt16BE()
-        guard version == PackageContainer.expectedVersion else { throw PackageError.unsupportedVersion(version) }
-        let flags = try r.readUInt16BE()
-        let metadataLength = Int(try r.readUInt32BE())
-        guard metadataLength <= 1024*1024 else { throw PackageError.invalidField("metadataLength") }
-        let metadataData = try r.readData(count: metadataLength)
-        guard let metadata = try? JSONDecoder().decode(PackageMetadata.self, from: metadataData)
-            else { throw PackageError.invalidJSON }
-        let ephemeralPublicKey = try r.readData(count: 65)
-        let wrapNonce = try r.readData(count: 12)
-        let wrappedContentKey = try r.readData(count: 48)
-        let contentNonce = try r.readData(count: 12)
-        let ciphertext = try r.readData(count: metadata.contentLength)
-        let contentTag = try r.readData(count: 16)
-        let signatureLength = Int(try r.readUInt16BE())
-        let signature = try r.readData(count: signatureLength)
-        let signedLength = data.count - signatureLength - 2
-        let signedBytes = data.prefix(signedLength)
-        return PackageContainer(
-            version: version,
-            flags: flags,
-            metadata: metadata,
-            ephemeralPublicKey: ephemeralPublicKey,
-            wrapNonce: wrapNonce,
-            wrappedContentKey: wrappedContentKey,
-            contentNonce: contentNonce,
-            ciphertext: ciphertext,
-            contentTag: contentTag,
-            signature: signature,
-            signedBytes: Data(signedBytes)
-        )
-    }
-}
-""")
-
-# ===================== PackageVerifier.swift =====================
-write_file("Sources/FELIXDEV/Core/PackageVerifier.swift", """\
-import Foundation
-import CryptoKit
-
-struct PackageVerifier<Root: TrustRoot>: CryptoVerifying {
-    let environment: String
-    let trustRoot: Root.Type
-    let keyStore: DeviceKeyAgreementStore
-
-    func verify(_ data: Data) throws -> VerifiedPackage {
-        let pkg = try PackageParser.parse(data)
-        guard pkg.metadata.environment == environment else { throw PackageError.wrongEnvironment }
-        guard pkg.metadata.keyID == Root.keyID else { throw PackageError.wrongKeyID }
-        guard pkg.metadata.algorithm == "AES-256-GCM+P256-ECDSA+ECDH-HKDF-SHA256" else { throw PackageError.invalidAlgorithm }
-        guard let pubKey = Root.publicKey else { throw PackageError.invalidField("trust root") }
-        let sig = try P256.Signing.ECDSASignature(derRepresentation: pkg.signature)
-        guard pubKey.isValidSignature(sig, for: pkg.signedBytes) else { throw PackageError.invalidSignature }
-        let recipient = try keyStore.keyAgreementKey()
-        let ephemeral = try P256.KeyAgreement.PublicKey(x963Representation: pkg.ephemeralPublicKey)
-        let shared = try recipient.sharedSecretFromKey(ephemeral)
-        let wrapKey = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data("3105-key-wrap".utf8),
-                                                       sharedInfo: Data("FELIXDEV-v2".utf8), outputByteCount: 32)
-        let wrapBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: pkg.wrapNonce),
-                                            ciphertext: pkg.wrappedContentKey.dropLast(16),
-                                            tag: pkg.wrappedContentKey.suffix(16))
-        let contentKeyData = try AES.GCM.open(wrapBox, using: wrapKey)
-        guard contentKeyData.count == 32 else { throw PackageError.cryptoFailure }
-        let contentKey = SymmetricKey(data: contentKeyData)
-        let box = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: pkg.contentNonce),
-                                        ciphertext: pkg.ciphertext, tag: pkg.contentTag)
-        let plaintext = try AES.GCM.open(box, using: contentKey)
-        guard plaintext.count == pkg.metadata.contentLength else { throw PackageError.invalidField("contentLength") }
-        let digest = SHA256.hash(data: plaintext).map { String(format: "%02x", $0) }.joined()
-        guard digest == pkg.metadata.contentHash.lowercased() else { throw PackageError.hashMismatch }
-        return VerifiedPackage(metadata: pkg.metadata, plaintext: plaintext)
-    }
-}
-""")
-
-# ===================== QAFixtureVerifier.swift =====================
-write_file("Sources/FELIXDEV/Core/QAFixtureVerifier.swift", """\
-import Foundation
-
-struct QAFixtureVerifier: CryptoVerifying {
-    let trustRoot: QATrustRoot.Type
-    let keyStore: DeviceKeyAgreementStore
-    func verify(_ data: Data) throws -> VerifiedPackage {
-        try PackageVerifier(environment: "qa", trustRoot: trustRoot, keyStore: keyStore).verify(data)
-    }
-}
-""")
-
-# ===================== ProductionVerifier.swift =====================
-write_file("Sources/FELIXDEV/Core/ProductionVerifier.swift", """\
-import Foundation
-
-struct ProductionVerifier: CryptoVerifying {
-    let trustRoot: ProductionTrustRoot.Type
-    let keyStore: DeviceKeyAgreementStore
-    func verify(_ data: Data) throws -> VerifiedPackage {
-        try PackageVerifier(environment: "production", trustRoot: trustRoot, keyStore: keyStore).verify(data)
-    }
-}
-""")
-
-# ===================== AppDependencies.swift =====================
-write_file("Sources/FELIXDEV/AppDependencies.swift", """\
-import Foundation
+# ===================== App Dependencies & Entry =====================
+write_file("Sources/FELIXDEV/App.swift", """\
+import SwiftUI
 
 struct AppDependencies {
     let license: any LicenseProviding
     let packageSource: any PackageSource
-    let cryptoVerifier: any CryptoVerifying
     let features: any FeatureFlagProviding
 }
 
@@ -438,60 +138,17 @@ enum DependencyFactory {
         return AppDependencies(
             license: OfflineLicenseProvider(),
             packageSource: LocalPackageSource(fileURL: fixture),
-            cryptoVerifier: QAFixtureVerifier(trustRoot: QATrustRoot.self, keyStore: DeviceKeyAgreementStore()),
             features: OfflineFeatureProvider()
         )
         #else
         return AppDependencies(
             license: ProductionLicenseProvider(),
             packageSource: RemotePackageSource(endpoint: URL(string: "https://example.com/package.3105")!),
-            cryptoVerifier: ProductionVerifier(trustRoot: ProductionTrustRoot.self, keyStore: DeviceKeyAgreementStore()),
             features: ProductionFeatureProvider()
         )
         #endif
     }
 }
-""")
-
-# ===================== FFTHPatchController.swift =====================
-write_file("Sources/FELIXDEV/FFTHPatchController.swift", """\
-import Foundation
-
-struct FFTHPatchController {
-    let features: any FeatureFlagProviding
-    let packageSource: any PackageSource
-    let verifier: any CryptoVerifying
-    func applyPreset(_ preset: String) async throws -> VerifiedPackage {
-        guard await features.isEnabled(preset) else { throw PatchControllerError.featureDisabled(preset) }
-        let data = try await packageSource.loadPackage()
-        return try verifier.verify(data)
-    }
-}
-
-enum PatchControllerError: Error { case featureDisabled(String) }
-""")
-
-# ===================== FFMPatchController.swift =====================
-write_file("Sources/FELIXDEV/FFMPatchController.swift", """\
-import Foundation
-
-struct FFMPatchController {
-    let features: any FeatureFlagProviding
-    let packageSource: any PackageSource
-    let verifier: any CryptoVerifying
-    func load() async throws -> VerifiedPackage {
-        guard await features.isEnabled("FFMPatchPreset") else {
-            throw PatchControllerError.featureDisabled("FFMPatchPreset")
-        }
-        let data = try await packageSource.loadPackage()
-        return try verifier.verify(data)
-    }
-}
-""")
-
-# ===================== FELIXDEVApp.swift =====================
-write_file("Sources/FELIXDEV/FELIXDEVApp.swift", """\
-import SwiftUI
 
 @main
 struct FELIXDEVApp: App {
@@ -504,8 +161,8 @@ struct FELIXDEVApp: App {
 }
 """)
 
-# ===================== Views =====================
-write_file("Sources/FELIXDEV/RootView.swift", """\
+# ===================== SwiftUI Views =====================
+write_file("Sources/FELIXDEV/Views.swift", """\
 import SwiftUI
 
 struct RootView: View {
@@ -515,16 +172,11 @@ struct RootView: View {
             DashboardView(dependencies: dependencies).tabItem { Label("Dashboard", systemImage: "house") }
             FileBrowserView(dependencies: dependencies).tabItem { Label("Files", systemImage: "folder") }
             PatchesView(dependencies: dependencies).tabItem { Label("Patches", systemImage: "wrench.and.screwdriver") }
-            WallpaperLabView().tabItem { Label("Wallpaper", systemImage: "photo") }
             CleanerView().tabItem { Label("Cleaner", systemImage: "trash") }
             SettingsView().tabItem { Label("Settings", systemImage: "gear") }
         }
     }
 }
-""")
-
-write_file("Sources/FELIXDEV/DashboardView.swift", """\
-import SwiftUI
 
 struct DashboardView: View {
     let dependencies: AppDependencies
@@ -546,10 +198,6 @@ struct DashboardView: View {
         }
     }
 }
-""")
-
-write_file("Sources/FELIXDEV/PatchesView.swift", """\
-import SwiftUI
 
 struct PatchesView: View {
     let dependencies: AppDependencies
@@ -564,10 +212,6 @@ struct PatchesView: View {
         }
     }
 }
-""")
-
-write_file("Sources/FELIXDEV/SettingsView.swift", """\
-import SwiftUI
 
 struct SettingsView: View {
     var body: some View {
@@ -590,10 +234,6 @@ struct SettingsView: View {
         }
     }
 }
-""")
-
-write_file("Sources/FELIXDEV/FileBrowserView.swift", """\
-import SwiftUI
 
 struct FileBrowserView: View {
     let dependencies: AppDependencies
@@ -613,28 +253,6 @@ struct FileBrowserView: View {
         }
     }
 }
-""")
-
-write_file("Sources/FELIXDEV/WallpaperLabView.swift", """\
-import SwiftUI
-
-struct WallpaperLabView: View {
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                Image(systemName: "photo.on.rectangle").font(.system(size: 48))
-                Text("Wallpaper Lab")
-                Text("Import QA fixtures from Documents/QA.").foregroundStyle(.secondary)
-            }
-            .padding()
-            .navigationTitle("Wallpaper")
-        }
-    }
-}
-""")
-
-write_file("Sources/FELIXDEV/CleanerView.swift", """\
-import SwiftUI
 
 struct CleanerView: View {
     @State private var message = ""
@@ -646,7 +264,7 @@ struct CleanerView: View {
                     let qa = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
                         .appendingPathComponent("QA")
                     if let children = try? fm.contentsOfDirectory(at: qa, includingPropertiesForKeys: nil) {
-                        for child in children where child.lastPathComponent != "payload.3105" {
+                        for child in children {
                             try? fm.removeItem(at: child)
                         }
                     }
@@ -661,38 +279,7 @@ struct CleanerView: View {
 """)
 
 # ===================== Localizations =====================
-for lang, content in [
-    ("en.lproj/Localizable.strings", """\
-"Dashboard" = "Dashboard";
-"Files" = "Files";
-"Patches" = "Patches";
-"Wallpaper" = "Wallpaper";
-"Cleaner" = "Cleaner";
-"Settings" = "Settings";
-"""),
-    ("vi.lproj/Localizable.strings", """\
-"Dashboard" = "Trang chính";
-"Files" = "Tệp";
-"Patches" = "Bản vá";
-"Wallpaper" = "Hình nền";
-"Cleaner" = "Dọn dẹp";
-"Settings" = "Settings";
-"""),
-    ("zh-Hans.lproj/Localizable.strings", """\
-"Dashboard" = "主页";
-"Files" = "文件";
-"Patches" = "补丁";
-"Wallpaper" = "壁纸";
-"Cleaner" = "清理";
-"Settings" = "设置";
-""")]:
-    write_file(f"Resources/{lang}", content)
-
-# ===================== README =====================
-write_file("README.md", """\
-# FELIXDEV - QA Offline iOS App
-GitHub Actions build script updated.
-""")
+write_file("Resources/en.lproj/Localizable.strings", '"Dashboard" = "Dashboard";\n')
 
 # ===================== GITHUB WORKFLOW =====================
 write_file(".github/workflows/qa.yml", """\
@@ -707,6 +294,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Clean previous outputs
+        run: rm -rf FELIXDEV DerivedData output
       - name: Generate FELIXDEV project
         run: python3 generate_project.py
       - name: Install XcodeGen
@@ -729,4 +318,4 @@ jobs:
           path: output/FELIXDEV-QA-Unsigned.ipa
 """)
 
-print("✅ Generater updated.")
+print("✅ Đã dọn dẹp cấu trúc nguồn và cập nhật generator.")
