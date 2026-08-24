@@ -15,12 +15,13 @@ jobs:
         run: rm -rf DerivedData output
       - name: Generate FELIXDEV project
         run: python3 generate_project.py
-      - name: Install XcodeGen
-        run: brew install xcodegen
+      - name: Install XcodeGen & XCBeautify
+        run: brew install xcodegen xcbeautify
       - name: Generate Xcode project
         run: cd FELIXDEV && xcodegen generate
       - name: Build device app (unsigned)
         run: |
+          set -o pipefail
           xcodebuild -project FELIXDEV/FELIXDEV.xcodeproj \
             -scheme FELIXDEV \
             -configuration QA \
@@ -30,7 +31,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            build | xcbeautify
       - name: Package .app into .ipa
         run: |
           mkdir -p output/Payload
