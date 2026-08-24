@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-generate_project.py - FELIXDEV Full Project (ĐÃ SỬA LỖI BIÊN DỊCH)
-- Sửa lỗi import CryptoKit, DeviceKeyAgreementStore, PackageVerifier
+generate_project.py - FELIXDEV Full Project (FIXED CRYPTO API)
+- Sửa lỗi CryptoKit: sharedSecretFromKeyAgreement, P256.Signing
 - Build thành công trên GitHub Actions
 """
 import os
@@ -500,6 +500,7 @@ extension Data {
 }
 """)
 
+# ===================== CryptoVerifying.swift =====================
 write_file("Sources/FELIXDEV/Core/CryptoVerifying.swift", """\
 import Foundation
 import CryptoKit
@@ -508,15 +509,18 @@ struct VerifiedPackage {
     let metadata: PackageMetadata
     let plaintext: Data
 }
+
 protocol CryptoVerifying {
     func verify(_ data: Data) throws -> VerifiedPackage
 }
+
 protocol TrustRoot {
     static var keyID: String { get }
     static var publicKeyData: Data { get }
 }
 """)
 
+# ===================== QATrustRoot.swift =====================
 write_file("Sources/FELIXDEV/Core/QATrustRoot.swift", """\
 import Foundation
 import CryptoKit
@@ -530,6 +534,7 @@ enum QATrustRoot: TrustRoot {
 }
 """)
 
+# ===================== ProductionTrustRoot.swift =====================
 write_file("Sources/FELIXDEV/Core/ProductionTrustRoot.swift", """\
 import Foundation
 import CryptoKit
@@ -543,7 +548,7 @@ enum ProductionTrustRoot: TrustRoot {
 }
 """)
 
-# ===================== DeviceKeyAgreementStore.swift (SỬA LỖI) =====================
+# ===================== DeviceKeyAgreementStore.swift =====================
 write_file("Sources/FELIXDEV/Core/DeviceKeyAgreementStore.swift", """\
 import Foundation
 import CryptoKit
@@ -596,7 +601,7 @@ enum KeyStoreError: Error {
 }
 """)
 
-# ===================== PackageVerifier.swift (SỬA LỖI) =====================
+# ===================== PackageVerifier.swift (FIXED API) =====================
 write_file("Sources/FELIXDEV/Core/PackageVerifier.swift", """\
 import Foundation
 import CryptoKit
@@ -609,65 +614,140 @@ struct PackageVerifier<Root: TrustRoot>: CryptoVerifying {
     func verify(_ data: Data) throws -> VerifiedPackage {
         let pkg = try PackageParser.parse(data)
         
+        // 1. Kiểm tra environment
         guard pkg.metadata.environment == environment else {
             throw PackageError.wrongEnvironment
         }
+        
+        // 2. Kiểm tra keyID
         guard pkg.metadata.keyID == Root.keyID else {
             throw PackageError.wrongKeyID
         }
+        
+        // 3. Kiểm tra algorithm
         guard pkg.metadata.algorithm == "AES-256-GCM+P256-ECDSA+ECDH-HKDF-SHA256" else {
             throw PackageError.invalidAlgorithm
         }
         
-        guard let pubKey = Root.publicKey else {
-            throw PackageError.invalidField("trust root")
+        // 4. Lấy public key từ TrustRoot (P256.Signing.PublicKey)
+        guard let publicKey = Root.publicKey else {
+            throw PackageError.invalidField("publicKey")
         }
         
-        let sig = try P256.Signing.ECDSASignature(rawRepresentation: pkg.signature)
-        guard pubKey.isValidSignature(sig, for: pkg.signedBytes) else {
+        // 5. Xác minh chữ ký ECDSA
+        let signature: P256.Signing.ECDSASignature
+        do {
+            signature = try P256.Signing.ECDSASignature(rawRepresentation: pkg.signature)
+        } catch {
             throw PackageError.invalidSignature
         }
         
-        let recipient = try keyStore.keyAgreementKey()
-        let ephemeral = try P256.KeyAgreement.PublicKey(x963Representation: pkg.ephemeralPublicKey)
-        let shared = try recipient.sharedSecretFromKey(ephemeral)
-        let wrapKey = shared.hkdfDerivedSymmetricKey(
+        guard publicKey.isValidSignature(signature, for: pkg.signedBytes) else {
+            throw PackageError.invalidSignature
+        }
+        
+        // 6. ECDH: lấy private key của thiết bị
+        let devicePrivateKey = try keyStore.keyAgreementKey()
+        
+        // 7. Tạo ephemeral public key từ package
+        let ephemeralPublicKey: P256.KeyAgreement.PublicKey
+        do {
+            ephemeralPublicKey = try P256.KeyAgreement.PublicKey(x963Representation: pkg.ephemeralPublicKey)
+        } catch {
+            throw PackageError.invalidField("ephemeralPublicKey")
+        }
+        
+        // 8. ECDH shared secret (API ĐÚNG: sharedSecretFromKeyAgreement)
+        let sharedSecret = try devicePrivateKey.sharedSecretFromKeyAgreement(with: ephemeralPublicKey)
+        
+        // 9. HKDF tạo wrap key
+        let wrapKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
             salt: Data("3105-key-wrap".utf8),
             sharedInfo: Data("FELIXDEV-v2".utf8),
             outputByteCount: 32
         )
         
-        let wrapBox = try AES.GCM.SealedBox(
-            nonce: AES.GCM.Nonce(data: pkg.wrapNonce),
-            ciphertext: pkg.wrappedContentKey.dropLast(16),
-            tag: pkg.wrappedContentKey.suffix(16)
-        )
-        let contentKeyData = try AES.GCM.open(wrapBox, using: wrapKey)
-        guard contentKeyData.count == 32 else { throw PackageError.cryptoFailure }
+        // 10. Giải mã wrapped content key (AES-GCM)
+        let wrappedContentKeyData = pkg.wrappedContentKey
+        guard wrappedContentKeyData.count >= 32 + 16 else {
+            throw PackageError.invalidField("wrappedContentKey")
+        }
+        
+        let wrapNonce = pkg.wrapNonce
+        let wrapCiphertext = wrappedContentKeyData.dropLast(16)
+        let wrapTag = wrappedContentKeyData.suffix(16)
+        
+        let sealedBoxForWrap: AES.GCM.SealedBox
+        do {
+            sealedBoxForWrap = try AES.GCM.SealedBox(
+                nonce: AES.GCM.Nonce(data: wrapNonce),
+                ciphertext: wrapCiphertext,
+                tag: wrapTag
+            )
+        } catch {
+            throw PackageError.cryptoFailure
+        }
+        
+        let contentKeyData: Data
+        do {
+            contentKeyData = try AES.GCM.open(sealedBoxForWrap, using: wrapKey)
+        } catch {
+            throw PackageError.cryptoFailure
+        }
+        
+        guard contentKeyData.count == 32 else {
+            throw PackageError.cryptoFailure
+        }
+        
         let contentKey = SymmetricKey(data: contentKeyData)
         
-        let box = try AES.GCM.SealedBox(
-            nonce: AES.GCM.Nonce(data: pkg.contentNonce),
-            ciphertext: pkg.ciphertext,
-            tag: pkg.contentTag
-        )
-        let plaintext = try AES.GCM.open(box, using: contentKey)
+        // 11. Giải mã nội dung package (AES-GCM)
+        let contentNonce = pkg.contentNonce
+        let ciphertext = pkg.ciphertext
+        let contentTag = pkg.contentTag
         
+        let sealedBoxForContent: AES.GCM.SealedBox
+        do {
+            sealedBoxForContent = try AES.GCM.SealedBox(
+                nonce: AES.GCM.Nonce(data: contentNonce),
+                ciphertext: ciphertext,
+                tag: contentTag
+            )
+        } catch {
+            throw PackageError.cryptoFailure
+        }
+        
+        let plaintext: Data
+        do {
+            plaintext = try AES.GCM.open(sealedBoxForContent, using: contentKey)
+        } catch {
+            throw PackageError.cryptoFailure
+        }
+        
+        // 12. Kiểm tra content length
         guard plaintext.count == pkg.metadata.contentLength else {
             throw PackageError.invalidField("contentLength")
         }
         
-        let digest = SHA256.hash(data: plaintext).map { String(format: "%02x", $0) }.joined()
-        guard digest == pkg.metadata.contentHash.lowercased() else {
+        // 13. Kiểm tra SHA-256 hash
+        let digest = SHA256.hash(data: plaintext)
+        let digestHex = digest.map { String(format: "%02x", $0) }.joined()
+        
+        guard digestHex == pkg.metadata.contentHash.lowercased() else {
             throw PackageError.hashMismatch
         }
         
-        return VerifiedPackage(metadata: pkg.metadata, plaintext: plaintext)
+        // 14. Trả về VerifiedPackage
+        return VerifiedPackage(
+            metadata: pkg.metadata,
+            plaintext: plaintext
+        )
     }
 }
 """)
 
+# ===================== QAFixtureVerifier.swift =====================
 write_file("Sources/FELIXDEV/Core/QAFixtureVerifier.swift", """\
 import Foundation
 
@@ -680,6 +760,7 @@ struct QAFixtureVerifier: CryptoVerifying {
 }
 """)
 
+# ===================== ProductionVerifier.swift =====================
 write_file("Sources/FELIXDEV/Core/ProductionVerifier.swift", """\
 import Foundation
 
@@ -844,7 +925,7 @@ write_file("README.md", """\
 Build with GitHub Actions.
 """)
 
-# ===================== GitHub Workflow (KHÔNG CẦN SỬA) =====================
+# ===================== GitHub Workflow =====================
 write_file(".github/workflows/qa.yml", """\
 name: FELIXDEV QA Offline
 on:
@@ -878,5 +959,5 @@ jobs:
           path: output/FELIXDEV-QA-Unsigned.ipa
 """)
 
-print("✅ FELIXDEV full project generated (fixed crypto errors).")
+print("✅ FELIXDEV full project generated (FIXED CRYPTO API).")
 print("Commit và chạy workflow để nhận IPA.")
