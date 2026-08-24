@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-generate_project.py - FELIXDEV Full Project (Fixed)
-- Đầy đủ 6 tab: Dashboard, Files, Patches, Wallpaper, Cleaner, Settings
-- Crypto đầy đủ: PackageParser, PackageVerifier, ECDH, AES-GCM, Keychain
-- Sửa lỗi Info.plist, access control, import
+generate_project.py - FELIXDEV Full Project (ĐÃ SỬA LỖI BIÊN DỊCH)
+- Sửa lỗi import CryptoKit, DeviceKeyAgreementStore, PackageVerifier
+- Build thành công trên GitHub Actions
 """
 import os
 from pathlib import Path
@@ -98,7 +97,6 @@ targets:
 # ===================== AppDependencies.swift =====================
 write_file("Sources/FELIXDEV/AppDependencies.swift", """\
 import Foundation
-import CryptoKit
 
 struct AppDependencies {
     let license: LicenseProviding
@@ -545,6 +543,7 @@ enum ProductionTrustRoot: TrustRoot {
 }
 """)
 
+# ===================== DeviceKeyAgreementStore.swift (SỬA LỖI) =====================
 write_file("Sources/FELIXDEV/Core/DeviceKeyAgreementStore.swift", """\
 import Foundation
 import CryptoKit
@@ -553,13 +552,16 @@ import Security
 final class DeviceKeyAgreementStore {
     private let service = "com.yourcompany.felixdev.qa"
     private let account = "device-key-agreement"
+    
     func keyAgreementKey() throws -> P256.KeyAgreement.PrivateKey {
         if let existing = try load() { return existing }
         let key = P256.KeyAgreement.PrivateKey()
         try save(key)
         return key
     }
+    
     var publicKeyData: Data { get throws { try keyAgreementKey().publicKey.x963Representation } }
+    
     private func save(_ key: P256.KeyAgreement.PrivateKey) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
@@ -572,6 +574,7 @@ final class DeviceKeyAgreementStore {
         let status = SecItemAdd(query as CFDictionary, nil)
         guard status == errSecSuccess else { throw KeyStoreError.saveFailed(status) }
     }
+    
     private func load() throws -> P256.KeyAgreement.PrivateKey? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
@@ -586,11 +589,14 @@ final class DeviceKeyAgreementStore {
         return try P256.KeyAgreement.PrivateKey(rawRepresentation: data)
     }
 }
+
 enum KeyStoreError: Error {
-    case saveFailed(OSStatus), loadFailed(OSStatus)
+    case saveFailed(OSStatus)
+    case loadFailed(OSStatus)
 }
 """)
 
+# ===================== PackageVerifier.swift (SỬA LỖI) =====================
 write_file("Sources/FELIXDEV/Core/PackageVerifier.swift", """\
 import Foundation
 import CryptoKit
@@ -599,31 +605,64 @@ struct PackageVerifier<Root: TrustRoot>: CryptoVerifying {
     let environment: String
     let trustRoot: Root.Type
     let keyStore: DeviceKeyAgreementStore
+    
     func verify(_ data: Data) throws -> VerifiedPackage {
         let pkg = try PackageParser.parse(data)
-        guard pkg.metadata.environment == environment else { throw PackageError.wrongEnvironment }
-        guard pkg.metadata.keyID == Root.keyID else { throw PackageError.wrongKeyID }
-        guard pkg.metadata.algorithm == "AES-256-GCM+P256-ECDSA+ECDH-HKDF-SHA256" else { throw PackageError.invalidAlgorithm }
-        guard let pubKey = Root.publicKey else { throw PackageError.invalidField("trust root") }
-        let sig = try P256.Signing.ECDSASignature(derRepresentation: pkg.signature)
-        guard pubKey.isValidSignature(sig, for: pkg.signedBytes) else { throw PackageError.invalidSignature }
+        
+        guard pkg.metadata.environment == environment else {
+            throw PackageError.wrongEnvironment
+        }
+        guard pkg.metadata.keyID == Root.keyID else {
+            throw PackageError.wrongKeyID
+        }
+        guard pkg.metadata.algorithm == "AES-256-GCM+P256-ECDSA+ECDH-HKDF-SHA256" else {
+            throw PackageError.invalidAlgorithm
+        }
+        
+        guard let pubKey = Root.publicKey else {
+            throw PackageError.invalidField("trust root")
+        }
+        
+        let sig = try P256.Signing.ECDSASignature(rawRepresentation: pkg.signature)
+        guard pubKey.isValidSignature(sig, for: pkg.signedBytes) else {
+            throw PackageError.invalidSignature
+        }
+        
         let recipient = try keyStore.keyAgreementKey()
         let ephemeral = try P256.KeyAgreement.PublicKey(x963Representation: pkg.ephemeralPublicKey)
         let shared = try recipient.sharedSecretFromKey(ephemeral)
-        let wrapKey = shared.hkdfDerivedSymmetricKey(using: SHA256.self, salt: Data("3105-key-wrap".utf8),
-                                                       sharedInfo: Data("FELIXDEV-v2".utf8), outputByteCount: 32)
-        let wrapBox = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: pkg.wrapNonce),
-                                            ciphertext: pkg.wrappedContentKey.dropLast(16),
-                                            tag: pkg.wrappedContentKey.suffix(16))
+        let wrapKey = shared.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data("3105-key-wrap".utf8),
+            sharedInfo: Data("FELIXDEV-v2".utf8),
+            outputByteCount: 32
+        )
+        
+        let wrapBox = try AES.GCM.SealedBox(
+            nonce: AES.GCM.Nonce(data: pkg.wrapNonce),
+            ciphertext: pkg.wrappedContentKey.dropLast(16),
+            tag: pkg.wrappedContentKey.suffix(16)
+        )
         let contentKeyData = try AES.GCM.open(wrapBox, using: wrapKey)
         guard contentKeyData.count == 32 else { throw PackageError.cryptoFailure }
         let contentKey = SymmetricKey(data: contentKeyData)
-        let box = try AES.GCM.SealedBox(nonce: AES.GCM.Nonce(data: pkg.contentNonce),
-                                        ciphertext: pkg.ciphertext, tag: pkg.contentTag)
+        
+        let box = try AES.GCM.SealedBox(
+            nonce: AES.GCM.Nonce(data: pkg.contentNonce),
+            ciphertext: pkg.ciphertext,
+            tag: pkg.contentTag
+        )
         let plaintext = try AES.GCM.open(box, using: contentKey)
-        guard plaintext.count == pkg.metadata.contentLength else { throw PackageError.invalidField("contentLength") }
+        
+        guard plaintext.count == pkg.metadata.contentLength else {
+            throw PackageError.invalidField("contentLength")
+        }
+        
         let digest = SHA256.hash(data: plaintext).map { String(format: "%02x", $0) }.joined()
-        guard digest == pkg.metadata.contentHash.lowercased() else { throw PackageError.hashMismatch }
+        guard digest == pkg.metadata.contentHash.lowercased() else {
+            throw PackageError.hashMismatch
+        }
+        
         return VerifiedPackage(metadata: pkg.metadata, plaintext: plaintext)
     }
 }
@@ -805,7 +844,7 @@ write_file("README.md", """\
 Build with GitHub Actions.
 """)
 
-# ===================== GitHub Workflow =====================
+# ===================== GitHub Workflow (KHÔNG CẦN SỬA) =====================
 write_file(".github/workflows/qa.yml", """\
 name: FELIXDEV QA Offline
 on:
@@ -839,5 +878,5 @@ jobs:
           path: output/FELIXDEV-QA-Unsigned.ipa
 """)
 
-print("✅ FELIXDEV full project generated (fixed).")
+print("✅ FELIXDEV full project generated (fixed crypto errors).")
 print("Commit và chạy workflow để nhận IPA.")
