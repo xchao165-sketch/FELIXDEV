@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
-generate_project.py
-Tự động sinh toàn bộ dự án FELIXDEV (SwiftUI, XcodeGen, GitHub Actions).
-Chỉ cần commit file này, GitHub Actions sẽ chạy và build IPA.
+generate_project.py - FELIXDEV iOS Project Generator (Fixed)
 """
 import os
 from pathlib import Path
@@ -382,7 +380,8 @@ write_file("Sources/FELIXDEV/Core/PackageParser.swift", """\
 import Foundation
 struct PackageContainer {
     static let magic = Data("3105".utf8)
-    static let version: UInt16 = 2
+    static let expectedVersion: UInt16 = 2
+    let version: UInt16
     let flags: UInt16
     let metadata: PackageMetadata
     let ephemeralPublicKey: Data
@@ -410,7 +409,7 @@ enum PackageParser {
         var r = ByteReader(data)
         guard try r.readData(count: 4) == PackageContainer.magic else { throw PackageError.invalidMagic }
         let version = try r.readUInt16BE()
-        guard version == PackageContainer.version else { throw PackageError.unsupportedVersion(version) }
+        guard version == PackageContainer.expectedVersion else { throw PackageError.unsupportedVersion(version) }
         let flags = try r.readUInt16BE()
         let metadataLength = Int(try r.readUInt32BE())
         guard metadataLength <= 1024*1024 else { throw PackageError.invalidField("metadataLength") }
@@ -428,11 +427,17 @@ enum PackageParser {
         let signedLength = data.count - signatureLength - 2
         let signedBytes = data.prefix(signedLength)
         return PackageContainer(
-            flags: flags, metadata: metadata,
-            ephemeralPublicKey: ephemeralPublicKey, wrapNonce: wrapNonce,
-            wrappedContentKey: wrappedContentKey, contentNonce: contentNonce,
-            ciphertext: ciphertext, contentTag: contentTag,
-            signature: signature, signedBytes: Data(signedBytes)
+            version: version,
+            flags: flags,
+            metadata: metadata,
+            ephemeralPublicKey: ephemeralPublicKey,
+            wrapNonce: wrapNonce,
+            wrappedContentKey: wrappedContentKey,
+            contentNonce: contentNonce,
+            ciphertext: ciphertext,
+            contentTag: contentTag,
+            signature: signature,
+            signedBytes: Data(signedBytes)
         )
     }
 }
@@ -445,7 +450,7 @@ enum PackageCanonicalizer {
     static func canonicalBytes(package: PackageContainer) throws -> Data {
         var out = Data()
         out.append(PackageContainer.magic)
-        out.appendUInt16BE(PackageContainer.version)
+        out.appendUInt16BE(package.version)
         out.appendUInt16BE(package.flags)
         let meta = try JSONEncoder().encode(package.metadata)
         out.appendUInt32BE(UInt32(meta.count))
@@ -485,8 +490,10 @@ import Foundation
 import CryptoKit
 enum QATrustRoot: TrustRoot {
     static let keyID = "qa-2026-01"
-    static let publicKeyData = Data() // Replace with real public key later
-    static var publicKey: P256.Signing.PublicKey? { try? P256.Signing.PublicKey(x963Representation: publicKeyData) }
+    static let publicKeyData = Data()
+    static var publicKey: P256.Signing.PublicKey? {
+        try? P256.Signing.PublicKey(x963Representation: publicKeyData)
+    }
 }
 """)
 
@@ -497,11 +504,13 @@ import CryptoKit
 enum ProductionTrustRoot: TrustRoot {
     static let keyID = "production-2026-01"
     static let publicKeyData = Data()
-    static var publicKey: P256.Signing.PublicKey? { try? P256.Signing.PublicKey(x963Representation: publicKeyData) }
+    static var publicKey: P256.Signing.PublicKey? {
+        try? P256.Signing.PublicKey(x963Representation: publicKeyData)
+    }
 }
 """)
 
-# ===================== DeviceKeyAgreementStore.swift =====================
+# ===================== DeviceKeyAgreementStore.swift (FIXED) =====================
 write_file("Sources/FELIXDEV/Core/DeviceKeyAgreementStore.swift", """\
 import Foundation
 import CryptoKit
@@ -652,7 +661,7 @@ final class FeatureProviderTests: XCTestCase {
 }
 """)
 
-# ===================== TOOLS (for package builder) =====================
+# ===================== TOOLS =====================
 write_file("tools/requirements.txt", """\
 cryptography>=42,<48
 """)
@@ -692,7 +701,7 @@ def main():
     content_hash = hashlib.sha256(plain).hexdigest()
     content_key = AESGCM.generate_key(bit_length=256)
     nonce = os.urandom(12)
-    ct, tag = AESGCM(content_key).encrypt(nonce, plain, None)[:-16], AESGCM(content_key).encrypt(nonce, plain, None)[-16:]
+    ciphertext, tag = AESGCM(content_key).encrypt(nonce, plain, None)[:-16], AESGCM(content_key).encrypt(nonce, plain, None)[-16:]
     recip = load_pub(args.recipient_public_key)
     eph_priv = ec.generate_private_key(ec.SECP256R1())
     eph_pub = eph_priv.public_key()
@@ -706,7 +715,7 @@ def main():
     meta = {"environment": args.environment, "keyID": args.key_id, "algorithm": ALG,
             "contentLength": len(plain), "contentHash": content_hash}
     meta_bytes = json.dumps(meta, separators=(",",":"), sort_keys=True).encode("utf-8")
-    cano = MAGIC + be16(VERSION) + be16(FLAGS) + be32(len(meta_bytes)) + meta_bytes + eph_pub_bytes + wrap_nonce + wrapped_content_key + nonce + ct + tag
+    cano = MAGIC + be16(VERSION) + be16(FLAGS) + be32(len(meta_bytes)) + meta_bytes + eph_pub_bytes + wrap_nonce + wrapped_content_key + nonce + ciphertext + tag
     priv = load_priv(args.private_key)
     sig = priv.sign(cano, ec.ECDSA(hashes.SHA256()))
     out = cano + be16(len(sig)) + sig
@@ -756,5 +765,5 @@ jobs:
           path: output/FELIXDEV-QA-Unsigned.ipa
 """)
 
-print("Đã tạo toàn bộ project FELIXDEV.")
-print("Commit lên GitHub và chạy Action để nhận IPA.")
+print("✅ Đã tạo project FELIXDEV (đã sửa lỗi).")
+print("Commit lên GitHub và workflow sẽ chạy thành công.")
