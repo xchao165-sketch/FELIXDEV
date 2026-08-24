@@ -62,222 +62,35 @@ CODE_SIGNING_ALLOWED = NO
 CODE_SIGNING_REQUIRED = NO
 """)
 
-# ===================== AppDependencies.swift =====================
-write_file("Sources/FELIXDEV/AppDependencies.swift", """\
-import Foundation
-struct AppDependencies {
-    let license: any LicenseProviding
-    let packageSource: any PackageSource
-    let cryptoVerifier: any CryptoVerifying
-    let features: any FeatureFlagProviding
-}
-enum DependencyFactory {
-    static func make() -> AppDependencies {
-        #if QA_OFFLINE
-        let qaDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("QA", isDirectory: true)
-        try? FileManager.default.createDirectory(at: qaDir, withIntermediateDirectories: true)
-        let fixture = qaDir.appendingPathComponent("payload.3105")
-        return AppDependencies(
-            license: OfflineLicenseProvider(),
-            packageSource: LocalPackageSource(fileURL: fixture),
-            cryptoVerifier: QAFixtureVerifier(trustRoot: QATrustRoot.self, keyStore: DeviceKeyAgreementStore()),
-            features: OfflineFeatureProvider()
-        )
-        #else
-        return AppDependencies(
-            license: ProductionLicenseProvider(),
-            packageSource: RemotePackageSource(endpoint: URL(string: "https://example.com/package.3105")!),
-            cryptoVerifier: ProductionVerifier(trustRoot: ProductionTrustRoot.self, keyStore: DeviceKeyAgreementStore()),
-            features: ProductionFeatureProvider()
-        )
-        #endif
-    }
-}
-""")
-
-# ===================== FELIXDEVApp.swift =====================
-write_file("Sources/FELIXDEV/FELIXDEVApp.swift", """\
-import SwiftUI
-@main
-struct FELIXDEVApp: App {
-    private let dependencies = DependencyFactory.make()
-    var body: some Scene {
-        WindowGroup {
-            RootView(dependencies: dependencies)
-        }
-    }
-}
-""")
-
-# ===================== RootView.swift =====================
-write_file("Sources/FELIXDEV/RootView.swift", """\
-import SwiftUI
-struct RootView: View {
-    let dependencies: AppDependencies
-    var body: some View {
-        TabView {
-            DashboardView(dependencies: dependencies).tabItem { Label("Dashboard", systemImage: "house") }
-            FileBrowserView(dependencies: dependencies).tabItem { Label("Files", systemImage: "folder") }
-            PatchesView(dependencies: dependencies).tabItem { Label("Patches", systemImage: "wrench.and.screwdriver") }
-            WallpaperLabView().tabItem { Label("Wallpaper", systemImage: "photo") }
-            CleanerView().tabItem { Label("Cleaner", systemImage: "trash") }
-            SettingsView().tabItem { Label("Settings", systemImage: "gear") }
-        }
-    }
-}
-""")
-
-# ===================== DashboardView.swift =====================
-write_file("Sources/FELIXDEV/DashboardView.swift", """\
-import SwiftUI
-struct DashboardView: View {
-    let dependencies: AppDependencies
-    @State private var licensed = false
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("Status") {
-                    Label(licensed ? "Offline QA license active" : "License unavailable",
-                          systemImage: licensed ? "checkmark.circle" : "xmark.circle")
-                }
-                Section("Build") {
-                    Text("FELIXDEV")
-                    Text("QA Offline").foregroundStyle(.secondary)
-                }
-            }
-            .navigationTitle("Dashboard")
-            .task { licensed = await dependencies.license.isLicensed }
-        }
-    }
-}
-""")
-
-# ===================== PatchesView.swift =====================
-write_file("Sources/FELIXDEV/PatchesView.swift", """\
-import SwiftUI
-struct PatchesView: View {
-    let dependencies: AppDependencies
-    @State private var presets: [String] = []
-    var body: some View {
-        NavigationStack {
-            List(presets, id: \\.self) { preset in
-                HStack { Text(preset); Spacer(); Image(systemName: "checkmark.circle.fill") }
-            }
-            .navigationTitle("Patches")
-            .task { presets = await dependencies.features.enabledPresets() }
-        }
-    }
-}
-""")
-
-# ===================== SettingsView.swift =====================
-write_file("Sources/FELIXDEV/SettingsView.swift", """\
-import SwiftUI
-struct SettingsView: View {
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Application") {
-                    LabeledContent("Name", value: "FELIXDEV")
-                    LabeledContent("Version", value: "1.0 QA")
-                    LabeledContent("Bundle ID", value: Bundle.main.bundleIdentifier ?? "-")
-                }
-                Section("Environment") {
-                    #if QA_OFFLINE
-                    Text("QA_OFFLINE").foregroundStyle(.green)
-                    #else
-                    Text("Production")
-                    #endif
-                }
-            }
-            .navigationTitle("Settings")
-        }
-    }
-}
-""")
-
-# ===================== FileBrowserView.swift =====================
-write_file("Sources/FELIXDEV/FileBrowserView.swift", """\
-import SwiftUI
-struct FileBrowserView: View {
-    let dependencies: AppDependencies
-    @State private var files: [URL] = []
-    var body: some View {
-        NavigationStack {
-            List(files, id: \\.self) { url in
-                Text(url.lastPathComponent)
-            }
-            .navigationTitle("Files")
-            .task {
-                let qa = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent("QA")
-                try? FileManager.default.createDirectory(at: qa, withIntermediateDirectories: true)
-                files = (try? FileManager.default.contentsOfDirectory(at: qa, includingPropertiesForKeys: nil)) ?? []
-            }
-        }
-    }
-}
-""")
-
-# ===================== WallpaperLabView.swift =====================
-write_file("Sources/FELIXDEV/WallpaperLabView.swift", """\
-import SwiftUI
-struct WallpaperLabView: View {
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                Image(systemName: "photo.on.rectangle").font(.system(size: 48))
-                Text("Wallpaper Lab")
-                Text("Import QA fixtures from Documents/QA.").foregroundStyle(.secondary)
-            }
-            .padding()
-            .navigationTitle("Wallpaper")
-        }
-    }
-}
-""")
-
-# ===================== CleanerView.swift =====================
-write_file("Sources/FELIXDEV/CleanerView.swift", """\
-import SwiftUI
-struct CleanerView: View {
-    @State private var message = ""
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                Button("Clear QA Cache") {
-                    let fm = FileManager.default
-                    let qa = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                        .appendingPathComponent("QA")
-                    if let children = try? fm.contentsOfDirectory(at: qa, includingPropertiesForKeys: nil) {
-                        for child in children where child.lastPathComponent != "payload.3105" {
-                            try? fm.removeItem(at: child)
-                        }
-                    }
-                    message = "Cache cleared"
-                }
-                Text(message)
-            }
-            .navigationTitle("Cleaner")
-        }
-    }
-}
-""")
-
 # ===================== LicenseProviding.swift =====================
 write_file("Sources/FELIXDEV/Core/LicenseProviding.swift", """\
 import Foundation
-protocol LicenseProviding: Sendable { var isLicensed: Bool { get async } }
-struct OfflineLicenseProvider: LicenseProviding { var isLicensed: Bool { get async { true } } }
-struct ProductionLicenseProvider: LicenseProviding { var isLicensed: Bool { get async { false } } }
+
+protocol LicenseProviding: Sendable { 
+    var isLicensed: Bool { get async } 
+}
+
+struct OfflineLicenseProvider: LicenseProviding { 
+    var isLicensed: Bool { get async { true } } 
+}
+
+struct ProductionLicenseProvider: LicenseProviding { 
+    var isLicensed: Bool { get async { false } } 
+}
 """)
 
 # ===================== PackageSource.swift =====================
 write_file("Sources/FELIXDEV/Core/PackageSource.swift", """\
 import Foundation
-protocol PackageSource: Sendable { func loadPackage() async throws -> Data }
-enum PackageSourceError: Error { case fileMissing(URL), networkUnavailable, invalidResponse }
+
+protocol PackageSource: Sendable { 
+    func loadPackage() async throws -> Data 
+}
+
+enum PackageSourceError: Error { 
+    case fileMissing(URL), networkUnavailable, invalidResponse 
+}
+
 struct LocalPackageSource: PackageSource {
     let fileURL: URL
     func loadPackage() async throws -> Data {
@@ -287,6 +100,7 @@ struct LocalPackageSource: PackageSource {
         return try Data(contentsOf: fileURL)
     }
 }
+
 struct RemotePackageSource: PackageSource {
     let endpoint: URL
     func loadPackage() async throws -> Data {
@@ -302,50 +116,124 @@ struct RemotePackageSource: PackageSource {
 # ===================== FeatureFlagProviding.swift =====================
 write_file("Sources/FELIXDEV/Core/FeatureFlagProviding.swift", """\
 import Foundation
+
 protocol FeatureFlagProviding: Sendable {
     func isEnabled(_ id: String) async -> Bool
     func enabledPresets() async -> [String]
 }
+
 struct OfflineFeatureProvider: FeatureFlagProviding {
     private let presets = ["Aim.Magic.Free.Fire", "Mod.Ig.Free.Fire", "FFTHPatchPreset", "FFMPatchPreset"]
     func isEnabled(_ id: String) async -> Bool { presets.contains(id) }
     func enabledPresets() async -> [String] { presets }
 }
+
 struct ProductionFeatureProvider: FeatureFlagProviding {
     func isEnabled(_ id: String) async -> Bool { false }
     func enabledPresets() async -> [String] { [] }
 }
 """)
 
-# ===================== FFTHPatchController.swift =====================
-write_file("Sources/FELIXDEV/FFTHPatchController.swift", """\
+# ===================== CryptoVerifying.swift =====================
+write_file("Sources/FELIXDEV/Core/CryptoVerifying.swift", """\
 import Foundation
-struct FFTHPatchController {
-    let features: any FeatureFlagProviding
-    let packageSource: any PackageSource
-    let verifier: any CryptoVerifying
-    func applyPreset(_ preset: String) async throws -> VerifiedPackage {
-        guard await features.isEnabled(preset) else { throw PatchControllerError.featureDisabled(preset) }
-        let data = try await packageSource.loadPackage()
-        return try verifier.verify(data)
-    }
+import CryptoKit
+
+struct VerifiedPackage { 
+    let metadata: PackageMetadata 
+    let plaintext: Data 
 }
-enum PatchControllerError: Error { case featureDisabled(String) }
+
+protocol CryptoVerifying: Sendable { 
+    func verify(_ data: Data) throws -> VerifiedPackage 
+}
+
+protocol TrustRoot { 
+    static var keyID: String { get } 
+    static var publicKeyData: Data { get } 
+}
 """)
 
-# ===================== FFMPatchController.swift =====================
-write_file("Sources/FELIXDEV/FFMPatchController.swift", """\
+# ===================== QATrustRoot.swift =====================
+write_file("Sources/FELIXDEV/Core/QATrustRoot.swift", """\
 import Foundation
-struct FFMPatchController {
-    let features: any FeatureFlagProviding
-    let packageSource: any PackageSource
-    let verifier: any CryptoVerifying
-    func load() async throws -> VerifiedPackage {
-        guard await features.isEnabled("FFMPatchPreset") else {
-            throw PatchControllerError.featureDisabled("FFMPatchPreset")
-        }
-        let data = try await packageSource.loadPackage()
-        return try verifier.verify(data)
+import CryptoKit
+
+enum QATrustRoot: TrustRoot {
+    static let keyID = "qa-2026-01"
+    static let publicKeyData = Data()
+    static var publicKey: P256.Signing.PublicKey? {
+        try? P256.Signing.PublicKey(x963Representation: publicKeyData)
+    }
+}
+""")
+
+# ===================== ProductionTrustRoot.swift =====================
+write_file("Sources/FELIXDEV/Core/ProductionTrustRoot.swift", """\
+import Foundation
+import CryptoKit
+
+enum ProductionTrustRoot: TrustRoot {
+    static let keyID = "production-2026-01"
+    static let publicKeyData = Data()
+    static var publicKey: P256.Signing.PublicKey? {
+        try? P256.Signing.PublicKey(x963Representation: publicKeyData)
+    }
+}
+""")
+
+# ===================== DeviceKeyAgreementStore.swift =====================
+write_file("Sources/FELIXDEV/Core/DeviceKeyAgreementStore.swift", """\
+import Foundation
+import CryptoKit
+import Security
+
+enum KeyStoreError: Error { 
+    case saveFailed(OSStatus), loadFailed(OSStatus) 
+}
+
+final class DeviceKeyAgreementStore: @unchecked Sendable {
+    private let service = "com.yourcompany.felixdev.qa"
+    private let account = "device-key-agreement"
+
+    func keyAgreementKey() throws -> P256.KeyAgreement.PrivateKey {
+        if let existing = try load() { return existing }
+        let key = P256.KeyAgreement.PrivateKey()
+        try save(key)
+        return key
+    }
+
+    var publicKeyData: Data { 
+        get throws { 
+            try keyAgreementKey().publicKey.x963Representation 
+        } 
+    }
+
+    private func save(_ key: P256.KeyAgreement.PrivateKey) throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: key.rawRepresentation,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        ]
+        SecItemDelete(query as CFDictionary)
+        let status = SecItemAdd(query as CFDictionary, nil)
+        guard status == errSecSuccess else { throw KeyStoreError.saveFailed(status) }
+    }
+
+    private func load() throws -> P256.KeyAgreement.PrivateKey? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else { throw KeyStoreError.loadFailed(status) }
+        return try P256.KeyAgreement.PrivateKey(rawRepresentation: data)
     }
 }
 """)
@@ -353,24 +241,30 @@ struct FFMPatchController {
 # ===================== ByteReader.swift =====================
 write_file("Sources/FELIXDEV/Core/ByteReader.swift", """\
 import Foundation
+
 struct ByteReader {
     private let data: Data
     private(set) var offset: Int = 0
+
     init(_ data: Data) { self.data = data }
+
     var remaining: Int { data.count - offset }
+
     mutating func readData(count: Int) throws -> Data {
         guard count >= 0, remaining >= count else { throw PackageError.truncated }
         let result = data.subdata(in: offset..<(offset+count))
         offset += count
         return result
     }
+
     mutating func readUInt16BE() throws -> UInt16 {
         let d = try readData(count: 2)
-        return UInt16(d[0]) << 8 | UInt16(d[1])
+        return UInt16(d[d.startIndex]) << 8 | UInt16(d[d.startIndex + 1])
     }
+
     mutating func readUInt32BE() throws -> UInt32 {
         let d = try readData(count: 4)
-        return UInt32(d[0]) << 24 | UInt32(d[1]) << 16 | UInt32(d[2]) << 8 | UInt32(d[3])
+        return UInt32(d[d.startIndex]) << 24 | UInt32(d[d.startIndex + 1]) << 16 | UInt32(d[d.startIndex + 2]) << 8 | UInt32(d[d.startIndex + 3])
     }
 }
 """)
@@ -378,6 +272,7 @@ struct ByteReader {
 # ===================== PackageParser.swift =====================
 write_file("Sources/FELIXDEV/Core/PackageParser.swift", """\
 import Foundation
+
 struct PackageContainer {
     static let magic = Data("3105".utf8)
     static let expectedVersion: UInt16 = 2
@@ -393,6 +288,7 @@ struct PackageContainer {
     let signature: Data
     let signedBytes: Data
 }
+
 struct PackageMetadata: Codable {
     let environment: String
     let keyID: String
@@ -400,10 +296,12 @@ struct PackageMetadata: Codable {
     let contentLength: Int
     let contentHash: String
 }
+
 enum PackageError: Error {
     case truncated, invalidMagic, unsupportedVersion(UInt16), invalidJSON, invalidField(String)
     case invalidSignature, wrongEnvironment, wrongKeyID, invalidAlgorithm, hashMismatch, cryptoFailure
 }
+
 enum PackageParser {
     static func parse(_ data: Data) throws -> PackageContainer {
         var r = ByteReader(data)
@@ -446,6 +344,7 @@ enum PackageParser {
 # ===================== PackageCanonicalizer.swift =====================
 write_file("Sources/FELIXDEV/Core/PackageCanonicalizer.swift", """\
 import Foundation
+
 enum PackageCanonicalizer {
     static func canonicalBytes(package: PackageContainer) throws -> Data {
         var out = Data()
@@ -464,6 +363,7 @@ enum PackageCanonicalizer {
         return out
     }
 }
+
 extension Data {
     mutating func appendUInt16BE(_ v: UInt16) {
         append(UInt8((v>>8)&0xff)); append(UInt8(v&0xff))
@@ -475,93 +375,16 @@ extension Data {
 }
 """)
 
-# ===================== CryptoVerifying.swift =====================
-write_file("Sources/FELIXDEV/Core/CryptoVerifying.swift", """\
-import Foundation
-import CryptoKit
-struct VerifiedPackage { let metadata: PackageMetadata; let plaintext: Data }
-protocol CryptoVerifying: Sendable { func verify(_ data: Data) throws -> VerifiedPackage }
-protocol TrustRoot { static var keyID: String { get }; static var publicKeyData: Data { get } }
-""")
-
-# ===================== QATrustRoot.swift =====================
-write_file("Sources/FELIXDEV/Core/QATrustRoot.swift", """\
-import Foundation
-import CryptoKit
-enum QATrustRoot: TrustRoot {
-    static let keyID = "qa-2026-01"
-    static let publicKeyData = Data()
-    static var publicKey: P256.Signing.PublicKey? {
-        try? P256.Signing.PublicKey(x963Representation: publicKeyData)
-    }
-}
-""")
-
-# ===================== ProductionTrustRoot.swift =====================
-write_file("Sources/FELIXDEV/Core/ProductionTrustRoot.swift", """\
-import Foundation
-import CryptoKit
-enum ProductionTrustRoot: TrustRoot {
-    static let keyID = "production-2026-01"
-    static let publicKeyData = Data()
-    static var publicKey: P256.Signing.PublicKey? {
-        try? P256.Signing.PublicKey(x963Representation: publicKeyData)
-    }
-}
-""")
-
-# ===================== DeviceKeyAgreementStore.swift (FIXED) =====================
-write_file("Sources/FELIXDEV/Core/DeviceKeyAgreementStore.swift", """\
-import Foundation
-import CryptoKit
-import Security
-final class DeviceKeyAgreementStore: @unchecked Sendable {
-    private let service = "com.yourcompany.felixdev.qa"
-    private let account = "device-key-agreement"
-    func keyAgreementKey() throws -> P256.KeyAgreement.PrivateKey {
-        if let existing = try load() { return existing }
-        let key = P256.KeyAgreement.PrivateKey()
-        try save(key)
-        return key
-    }
-    var publicKeyData: Data { get throws { try keyAgreementKey().publicKey.x963Representation } }
-    private func save(_ key: P256.KeyAgreement.PrivateKey) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: key.rawRepresentation,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-        SecItemDelete(query as CFDictionary)
-        let status = SecItemAdd(query as CFDictionary, nil)
-        guard status == errSecSuccess else { throw KeyStoreError.saveFailed(status) }
-    }
-    private func load() throws -> P256.KeyAgreement.PrivateKey? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true
-        ]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data else { throw KeyStoreError.loadFailed(status) }
-        return try P256.KeyAgreement.PrivateKey(rawRepresentation: data)
-    }
-}
-enum KeyStoreError: Error { case saveFailed(OSStatus), loadFailed(OSStatus) }
-""")
-
 # ===================== PackageVerifier.swift =====================
 write_file("Sources/FELIXDEV/Core/PackageVerifier.swift", """\
 import Foundation
 import CryptoKit
+
 struct PackageVerifier<Root: TrustRoot>: CryptoVerifying {
     let environment: String
     let trustRoot: Root.Type
     let keyStore: DeviceKeyAgreementStore
+
     func verify(_ data: Data) throws -> VerifiedPackage {
         let pkg = try PackageParser.parse(data)
         guard pkg.metadata.environment == environment else { throw PackageError.wrongEnvironment }
@@ -595,6 +418,8 @@ struct PackageVerifier<Root: TrustRoot>: CryptoVerifying {
 # ===================== QAFixtureVerifier.swift =====================
 write_file("Sources/FELIXDEV/Core/QAFixtureVerifier.swift", """\
 import Foundation
+import CryptoKit
+
 struct QAFixtureVerifier: CryptoVerifying {
     let trustRoot: QATrustRoot.Type
     let keyStore: DeviceKeyAgreementStore
@@ -607,11 +432,265 @@ struct QAFixtureVerifier: CryptoVerifying {
 # ===================== ProductionVerifier.swift =====================
 write_file("Sources/FELIXDEV/Core/ProductionVerifier.swift", """\
 import Foundation
+import CryptoKit
+
 struct ProductionVerifier: CryptoVerifying {
     let trustRoot: ProductionTrustRoot.Type
     let keyStore: DeviceKeyAgreementStore
     func verify(_ data: Data) throws -> VerifiedPackage {
         try PackageVerifier(environment: "production", trustRoot: trustRoot, keyStore: keyStore).verify(data)
+    }
+}
+""")
+
+# ===================== AppDependencies.swift =====================
+write_file("Sources/FELIXDEV/AppDependencies.swift", """\
+import Foundation
+import CryptoKit
+
+struct AppDependencies {
+    let license: any LicenseProviding
+    let packageSource: any PackageSource
+    let cryptoVerifier: any CryptoVerifying
+    let features: any FeatureFlagProviding
+}
+
+enum DependencyFactory {
+    static func make() -> AppDependencies {
+        #if QA_OFFLINE
+        let qaDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("QA", isDirectory: true)
+        try? FileManager.default.createDirectory(at: qaDir, withIntermediateDirectories: true)
+        let fixture = qaDir.appendingPathComponent("payload.3105")
+        return AppDependencies(
+            license: OfflineLicenseProvider(),
+            packageSource: LocalPackageSource(fileURL: fixture),
+            cryptoVerifier: QAFixtureVerifier(trustRoot: QATrustRoot.self, keyStore: DeviceKeyAgreementStore()),
+            features: OfflineFeatureProvider()
+        )
+        #else
+        return AppDependencies(
+            license: ProductionLicenseProvider(),
+            packageSource: RemotePackageSource(endpoint: URL(string: "https://example.com/package.3105")!),
+            cryptoVerifier: ProductionVerifier(trustRoot: ProductionTrustRoot.self, keyStore: DeviceKeyAgreementStore()),
+            features: ProductionFeatureProvider()
+        )
+        #endif
+    }
+}
+""")
+
+# ===================== FFTHPatchController.swift =====================
+write_file("Sources/FELIXDEV/FFTHPatchController.swift", """\
+import Foundation
+import CryptoKit
+
+struct FFTHPatchController {
+    let features: any FeatureFlagProviding
+    let packageSource: any PackageSource
+    let verifier: any CryptoVerifying
+    func applyPreset(_ preset: String) async throws -> VerifiedPackage {
+        guard await features.isEnabled(preset) else { throw PatchControllerError.featureDisabled(preset) }
+        let data = try await packageSource.loadPackage()
+        return try verifier.verify(data)
+    }
+}
+
+enum PatchControllerError: Error { case featureDisabled(String) }
+""")
+
+# ===================== FFMPatchController.swift =====================
+write_file("Sources/FELIXDEV/FFMPatchController.swift", """\
+import Foundation
+import CryptoKit
+
+struct FFMPatchController {
+    let features: any FeatureFlagProviding
+    let packageSource: any PackageSource
+    let verifier: any CryptoVerifying
+    func load() async throws -> VerifiedPackage {
+        guard await features.isEnabled("FFMPatchPreset") else {
+            throw PatchControllerError.featureDisabled("FFMPatchPreset")
+        }
+        let data = try await packageSource.loadPackage()
+        return try verifier.verify(data)
+    }
+}
+""")
+
+# ===================== FELIXDEVApp.swift =====================
+write_file("Sources/FELIXDEV/FELIXDEVApp.swift", """\
+import SwiftUI
+
+@main
+struct FELIXDEVApp: App {
+    private let dependencies = DependencyFactory.make()
+    var body: some Scene {
+        WindowGroup {
+            RootView(dependencies: dependencies)
+        }
+    }
+}
+""")
+
+# ===================== RootView.swift =====================
+write_file("Sources/FELIXDEV/RootView.swift", """\
+import SwiftUI
+
+struct RootView: View {
+    let dependencies: AppDependencies
+    var body: some View {
+        TabView {
+            DashboardView(dependencies: dependencies).tabItem { Label("Dashboard", systemImage: "house") }
+            FileBrowserView(dependencies: dependencies).tabItem { Label("Files", systemImage: "folder") }
+            PatchesView(dependencies: dependencies).tabItem { Label("Patches", systemImage: "wrench.and.screwdriver") }
+            WallpaperLabView().tabItem { Label("Wallpaper", systemImage: "photo") }
+            CleanerView().tabItem { Label("Cleaner", systemImage: "trash") }
+            SettingsView().tabItem { Label("Settings", systemImage: "gear") }
+        }
+    }
+}
+""")
+
+# ===================== DashboardView.swift =====================
+write_file("Sources/FELIXDEV/DashboardView.swift", """\
+import SwiftUI
+
+struct DashboardView: View {
+    let dependencies: AppDependencies
+    @State private var licensed = false
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Status") {
+                    Label(licensed ? "Offline QA license active" : "License unavailable",
+                          systemImage: licensed ? "checkmark.circle" : "xmark.circle")
+                }
+                Section("Build") {
+                    Text("FELIXDEV")
+                    Text("QA Offline").foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Dashboard")
+            .task { licensed = await dependencies.license.isLicensed }
+        }
+    }
+}
+""")
+
+# ===================== PatchesView.swift =====================
+write_file("Sources/FELIXDEV/PatchesView.swift", """\
+import SwiftUI
+
+struct PatchesView: View {
+    let dependencies: AppDependencies
+    @State private var presets: [String] = []
+    var body: some View {
+        NavigationStack {
+            List(presets, id: \\self) { preset in
+                HStack { Text(preset); Spacer(); Image(systemName: "checkmark.circle.fill") }
+            }
+            .navigationTitle("Patches")
+            .task { presets = await dependencies.features.enabledPresets() }
+        }
+    }
+}
+""")
+
+# ===================== SettingsView.swift =====================
+write_file("Sources/FELIXDEV/SettingsView.swift", """\
+import SwiftUI
+
+struct SettingsView: View {
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Application") {
+                    LabeledContent("Name", value: "FELIXDEV")
+                    LabeledContent("Version", value: "1.0 QA")
+                    LabeledContent("Bundle ID", value: Bundle.main.bundleIdentifier ?? "-")
+                }
+                Section("Environment") {
+                    #if QA_OFFLINE
+                    Text("QA_OFFLINE").foregroundStyle(.green)
+                    #else
+                    Text("Production")
+                    #endif
+                }
+            }
+            .navigationTitle("Settings")
+        }
+    }
+}
+""")
+
+# ===================== FileBrowserView.swift =====================
+write_file("Sources/FELIXDEV/FileBrowserView.swift", """\
+import SwiftUI
+
+struct FileBrowserView: View {
+    let dependencies: AppDependencies
+    @State private var files: [URL] = []
+    var body: some View {
+        NavigationStack {
+            List(files, id: \\self) { url in
+                Text(url.lastPathComponent)
+            }
+            .navigationTitle("Files")
+            .task {
+                let qa = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent("QA")
+                try? FileManager.default.createDirectory(at: qa, withIntermediateDirectories: true)
+                files = (try? FileManager.default.contentsOfDirectory(at: qa, includingPropertiesForKeys: nil)) ?? []
+            }
+        }
+    }
+}
+""")
+
+# ===================== WallpaperLabView.swift =====================
+write_file("Sources/FELIXDEV/WallpaperLabView.swift", """\
+import SwiftUI
+
+struct WallpaperLabView: View {
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                Image(systemName: "photo.on.rectangle").font(.system(size: 48))
+                Text("Wallpaper Lab")
+                Text("Import QA fixtures from Documents/QA.").foregroundStyle(.secondary)
+            }
+            .padding()
+            .navigationTitle("Wallpaper")
+        }
+    }
+}
+""")
+
+# ===================== CleanerView.swift =====================
+write_file("Sources/FELIXDEV/CleanerView.swift", """\
+import SwiftUI
+
+struct CleanerView: View {
+    @State private var message = ""
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                Button("Clear QA Cache") {
+                    let fm = FileManager.default
+                    let qa = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("QA")
+                    if let children = try? fm.contentsOfDirectory(at: qa, includingPropertiesForKeys: nil) {
+                        for child in children where child.lastPathComponent != "payload.3105" {
+                            try? fm.removeItem(at: child)
+                        }
+                    }
+                    message = "Cache cleared"
+                }
+                Text(message)
+            }
+            .navigationTitle("Cleaner")
+        }
     }
 }
 """)
@@ -648,6 +727,7 @@ for lang, content in [
 write_file("Tests/FELIXDEVTests/FeatureProviderTests.swift", """\
 import XCTest
 @testable import FELIXDEV
+
 final class FeatureProviderTests: XCTestCase {
     func testOfflineFeatures() async {
         let provider = OfflineFeatureProvider()
@@ -673,9 +753,12 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
 MAGIC = b"3105"; VERSION = 2; FLAGS = 0; ALG = "AES-256-GCM+P256-ECDSA+ECDH-HKDF-SHA256"
+
 def be16(x): return struct.pack(">H", x)
 def be32(x): return struct.pack(">I", x)
+
 def archive_dir(d):
     import io
     buf = io.BytesIO()
@@ -685,10 +768,13 @@ def archive_dir(d):
                 path = os.path.join(root, f)
                 z.write(path, os.path.relpath(path, d))
     return buf.getvalue()
+
 def load_priv(path):
     with open(path, "rb") as f: return serialization.load_pem_private_key(f.read(), password=None)
+
 def load_pub(path):
     with open(path, "rb") as f: return serialization.load_pem_public_key(f.read())
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("directory"); ap.add_argument("-o", "--output", default="payload.3105")
@@ -721,6 +807,7 @@ def main():
     out = cano + be16(len(sig)) + sig
     with open(args.output, "wb") as f: f.write(out)
     print("created:", args.output)
+
 if __name__ == "__main__": main()
 """)
 
