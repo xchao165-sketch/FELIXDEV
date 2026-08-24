@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-generate_project.py - FELIXDEV iOS Project Generator (Fixed)
+generate_project.py - FELIXDEV iOS Project Generator (Fixed Build & Flags)
 """
 import os
 from pathlib import Path
@@ -30,9 +30,14 @@ settings:
     SWIFT_VERSION: "5.0"
     IPHONEOS_DEPLOYMENT_TARGET: "16.0"
     TARGETED_DEVICE_FAMILY: "1,2"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+    CODE_SIGN_IDENTITY: ""
   configs:
     QA:
-      SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) QA_OFFLINE DEBUG"
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS:
+        - QA_OFFLINE
+        - DEBUG
       PRODUCT_BUNDLE_IDENTIFIER: com.yourcompany.felixdev.qa
 targets:
   FELIXDEV:
@@ -47,19 +52,25 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.yourcompany.felixdev
         INFOPLIST_KEY_CFBundleDisplayName: FELIXDEV
         INFOPLIST_KEY_CFBundleName: FELIXDEV
+        CODE_SIGNING_ALLOWED: "NO"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGN_IDENTITY: ""
     configs:
       QA:
         PRODUCT_BUNDLE_IDENTIFIER: com.yourcompany.felixdev.qa
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) QA_OFFLINE DEBUG"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS:
+          - QA_OFFLINE
+          - DEBUG
 """)
 
 # ===================== QA.xcconfig =====================
 write_file("Config/QA.xcconfig", """\
-SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) DEBUG QA_OFFLINE
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = QA_OFFLINE DEBUG
 PRODUCT_BUNDLE_IDENTIFIER = com.yourcompany.felixdev.qa
 INFOPLIST_KEY_CFBundleDisplayName = FELIXDEV QA
 CODE_SIGNING_ALLOWED = NO
 CODE_SIGNING_REQUIRED = NO
+CODE_SIGN_IDENTITY = ""
 """)
 
 # ===================== LicenseProviding.swift =====================
@@ -711,7 +722,7 @@ for lang, content in [
 "Patches" = "Bản vá";
 "Wallpaper" = "Hình nền";
 "Cleaner" = "Dọn dẹp";
-"Settings" = "Cài đặt";
+"Settings" = "Settings";
 """),
     ("zh-Hans.lproj/Localizable.strings", """\
 "Dashboard" = "主页";
@@ -838,7 +849,7 @@ jobs:
         run: cd FELIXDEV && xcodegen generate
       - name: Build device app (unsigned)
         run: |
-          xcodebuild -project FELIXDEV/FELIXDEV.xcodeproj -scheme FELIXDEV -configuration QA -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          xcodebuild -project FELIXDEV/FELIXDEV.xcodeproj -scheme FELIXDEV -configuration QA -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
       - name: Package .app into .ipa
         run: |
           mkdir -p output/Payload
@@ -852,5 +863,4 @@ jobs:
           path: output/FELIXDEV-QA-Unsigned.ipa
 """)
 
-print("✅ Đã tạo project FELIXDEV (đã sửa lỗi).")
-print("Commit lên GitHub và workflow sẽ chạy thành công.")
+print("✅ Đã tạo project FELIXDEV (đã sửa lỗi build flags và code signing).")
