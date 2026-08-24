@@ -1,0 +1,33 @@
+name: FELIXDEV QA Offline
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build unsigned device app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate FELIXDEV project
+        run: python3 generate_project.py
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        run: cd FELIXDEV && xcodegen generate
+      - name: Build device app (unsigned)
+        run: |
+          xcodebuild -project FELIXDEV/FELIXDEV.xcodeproj -scheme FELIXDEV -configuration QA -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Package .app into .ipa
+        run: |
+          mkdir -p output/Payload
+          APP=$(find DerivedData/Build/Products -path '*iphoneos*' -name 'FELIXDEV.app' -print -quit)
+          cp -R "$APP" output/Payload/
+          cd output && zip -qry FELIXDEV-QA-Unsigned.ipa Payload
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: FELIXDEV-QA-Unsigned-IPA
+          path: output/FELIXDEV-QA-Unsigned.ipa
