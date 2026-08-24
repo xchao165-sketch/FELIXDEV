@@ -11,6 +11,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Clean build artifacts
+        run: rm -rf DerivedData output
       - name: Generate FELIXDEV project
         run: python3 generate_project.py
       - name: Install XcodeGen
@@ -19,7 +21,16 @@ jobs:
         run: cd FELIXDEV && xcodegen generate
       - name: Build device app (unsigned)
         run: |
-          xcodebuild -project FELIXDEV/FELIXDEV.xcodeproj -scheme FELIXDEV -configuration QA -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+          xcodebuild -project FELIXDEV/FELIXDEV.xcodeproj \
+            -scheme FELIXDEV \
+            -configuration QA \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
       - name: Package .app into .ipa
         run: |
           mkdir -p output/Payload
